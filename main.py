@@ -1,9 +1,12 @@
+import copy
 import os
 from pathlib import Path
 
 import pylab
 import logging
 import sys
+
+from metrics import dice_coef_multilabel
 
 logging.getLogger().addHandler(logging.StreamHandler(sys.stdout))
 from EM import EM
@@ -18,7 +21,9 @@ init_type = 'kmeans'
 n_clusters = 3
 max_iter = 50
 n_clusters = 3
-error = 0.01
+error = 0.1
+
+# 0, 1 = red (CSF), 2="Grey matter", 3= "WM"
 
 for data_folder in data_folders:
     T1_fileName = data_path / data_folder / Path('T1.nii')
@@ -29,7 +34,7 @@ for data_folder in data_folders:
     T2 = read_img(filename=T2_fileName)
     gt = read_img(filename=gt_fileName)
 
-    gt_mask = gt.copy()
+    gt_mask = copy.deepcopy(gt)
     gt_mask[gt_mask > 0] = 1
     T1_masked = np.multiply(T1, gt_mask)
     T2_masked = np.multiply(T2, gt_mask)
@@ -40,6 +45,14 @@ for data_folder in data_folders:
     em = EM(stacked_features.squeeze(), init_type, n_clusters)
     recovered_img = em.execute(error, max_iter, visualize=False)
 
+    mean_values = np.unique(recovered_img)
+    seg_mask = np.zeros_like(recovered_img)
+
+    for i in range(n_clusters + 1):
+        seg_mask[recovered_img == mean_values[i]] = i
+
+    dice_list = dice_coef_multilabel(gt, seg_mask)
+    print(dice_list)
     fig, (ax1, ax2, ax3) = plt.subplots(1, 3)
 
     ax1.imshow(T1_masked[:, :, 24])
