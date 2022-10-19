@@ -3,9 +3,12 @@ import sys
 import numpy as np
 import pylab
 import matplotlib.pyplot as plt
+import seaborn
 from scipy.stats import multivariate_normal
 from sklearn.cluster._kmeans import KMeans
 import time
+
+from utils import plot_gmm
 
 logger = logging.getLogger(__name__)
 # logger.addHandler(logging.StreamHandler(sys.stdout))
@@ -15,11 +18,12 @@ logger.setLevel(logging.INFO)
 class EM:
     def __init__(self, img, init_type, n_clusters, dim):
         self.orig_data = img
+        #backgroud removal and not used while clustering (a dense cluster with all zeros)
         self.nz_indices = [i for i, x in enumerate(img) if x.any()]
         self.data = img[self.nz_indices]
         self.dim = dim
         self.n_clusters = n_clusters
-        self.log_likelihood_arr=[]
+        self.log_likelihood_arr = []
         self.init_type = init_type
         self.k_means_time = 0
         self.init()
@@ -52,6 +56,7 @@ class EM:
             seg_mask[recovered_img == mean_values[i]] = i
         return seg_mask
 
+    # initalization the centeriod with kmeans
     def init_kmeans(self, data, n_clusters):
         start_time = time.time()
 
@@ -62,6 +67,7 @@ class EM:
         ids = set(y)
         pi_s = np.array([np.sum([y == i]) / len(y) for i in ids])
 
+        # keeping track of kmeans running time
         self.k_means_time = (time.time() - start_time)
 
         # mask from the first initalization (to check kmeans acc)
@@ -69,6 +75,7 @@ class EM:
         self.kmeans_mask = self.mask_from_recovered(recovered_img)
         return mean_s, cov_s, pi_s
 
+    # expectation step for the EM algorithm
     def e_step(self, data, mu_s, cov_s, pi_s, n_clusters):
         posterior_probabilities = np.zeros((data.shape[0], n_clusters))
         for k in range(n_clusters):
@@ -79,6 +86,7 @@ class EM:
             (len(posterior_probabilities), 1))
         return posterior_probabilities
 
+    # maximization step of the EM algorithm
     def m_step(self, img, posterior_probabilities, K):
         mu_s = np.zeros((K, img.shape[1]))
         cov_s = np.zeros((K, img.shape[1], img.shape[1]))
@@ -103,6 +111,7 @@ class EM:
         log_likelihood = np.sum(np.log(np.sum(posterior_probabilities, axis=1)))
         return log_likelihood
 
+    # retrieve a segmentation mask from the output of the EM algorithm
     def get_segm_mask(self, means, labels, orig_data, nz_indices):
         out_labels = np.zeros(orig_data.shape[0])
         data_mean_replaced = np.array([element[0] for element in means])
@@ -118,27 +127,36 @@ class EM:
 
         self.responsibilities = self.e_step(self.data, self.mean_s, self.cov_s, self.pi_s, self.n_clusters)
         start_time = time.time()
+
+        # run until convergence or max iteration is reached
         while (abs(prev_log_likelihood - self.log_likelihood) > tol) and (iter_n <= max_iter):
             prev_log_likelihood = self.log_likelihood
 
             # get inital segmentation labels based on the random init
             self.seg_labels = self.get_labels(self.responsibilities)
+
+            # visualization of the gmm or the patient picture every 20 iterations
+            if visualize and iter_n % 20 == 0:
+                recover_img = self.get_segm_mask(self.mean_s, self.seg_labels, self.orig_data, self.nz_indices)
+                title = f'EM-Iter-{iter_n}'
+                plot_gmm(self.data, recover_img, self.mean_s, self.cov_s, title)
+                # plt.imshow(recover_img[:, :, 24], cmap=pylab.cm.cool)
+                plt.title('iter' + str(iter_n))
+                plt.show()
+
             # E-step
             self.responsibilities = self.e_step(self.data, self.mean_s, self.cov_s, self.pi_s, self.n_clusters)
+
             # M-Step
             self.mean_s, self.cov_s, self.pi_s = self.m_step(self.data, self.responsibilities, self.n_clusters)
 
+            # calculate the loglikelihood to check for convergence
             self.log_likelihood = self.get_log_likelihood(self.data, self.mean_s, self.cov_s, self.pi_s,
                                                           self.n_clusters)
 
             self.log_likelihood_arr.append(self.log_likelihood)
 
             logger.info("iter_n:{}, log_likelihood = {}".format(iter_n, self.log_likelihood))
-            if visualize:
-                recover_img = self.get_segm_mask(self.mean_s, self.seg_labels, self.orig_data, self.nz_indices)
-                plt.imshow(recover_img[:, :, 24], cmap=pylab.cm.cool)
-                plt.title('iter' + str(iter_n))
-                plt.show()
 
             iter_n += 1
 
