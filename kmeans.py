@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 import cv2
 from monai.metrics import DiceMetric
 import torch
-from metrics import dice
+from metrics import dice, dice_coef_multilabel
 
 t1_image_filenames = [i for i in Path("data").rglob("*/*.nii") if "T1" in str(i)]
 
@@ -39,15 +39,16 @@ for image_filename in t1_image_filenames:
     for label, val in enumerate(np.unique(result_image)):
         result_image[result_image == val] = label
     nifti_image = nib.Nifti1Image(result_image, affine=np.eye(4))
-    breakpoint()
     print(
         f"Dice for {image_filename}",
-        dice(torch.tensor(result_image), torch.tensor(gt_array)),
+        dice_coef_multilabel(
+            torch.tensor(result_image).flatten(), torch.tensor(gt_array).flatten()
+        ),
     )
 
     save_dir = Path("results") / image_filename.parent.stem
     save_dir.mkdir(exist_ok=True, parents=True)
     dice_metric = DiceMetric(include_background=True, reduction="mean")
-    print(dice_metric(y_pred=torch.tensor(result_image), y=torch.tensor(gt_array)))
+    # print(dice_metric(y_pred=torch.tensor(result_image), y=torch.tensor(gt_array)))
 
     nib.save(nifti_image, save_dir / Path(image_filename.name))

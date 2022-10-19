@@ -1,3 +1,4 @@
+from re import L
 import numpy as np
 
 
@@ -27,8 +28,7 @@ def dice(im1, im2, empty_score=1.0):
     im2 = np.asarray(im2).astype(np.bool)
 
     if im1.shape != im2.shape:
-        raise ValueError(
-            "Shape mismatch: im1 and im2 must have the same shape.")
+        raise ValueError("Shape mismatch: im1 and im2 must have the same shape.")
 
     im_sum = im1.sum() + im2.sum()
     if im_sum == 0:
@@ -37,20 +37,21 @@ def dice(im1, im2, empty_score=1.0):
     # Compute Dice coefficient
     intersection = np.logical_and(im1, im2)
 
-    return 2. * intersection.sum() / im_sum
+    return 2.0 * intersection.sum() / im_sum
 
 
 def dice_coef_multilabel(y_true, y_pred):
     numLabels = np.unique(y_true)
     dice_list = []
-    for label in numLabels:
-        y_pred[y_pred==label]=1
-        y_pred[y_pred!=label]=0
-        
-        y_true[y_true==label]=1
-        y_true[y_true!=label]=0
+    dis = lambda y, l: 1 if y == l else 0
+    vdis = np.vectorize(dis)
 
-        score=dice(y_true,y_pred)
+    for label in numLabels:
+
+        y_p = vdis(y_pred, label)
+        y_t = vdis(y_true, label)
+
+        score = dice(y_t, y_p)
         dice_list.append(score)
 
-    return dice_list # taking average
+    return dice_list  # taking average
