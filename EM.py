@@ -5,6 +5,7 @@ import pylab
 import matplotlib.pyplot as plt
 from scipy.stats import multivariate_normal
 from sklearn.cluster._kmeans import KMeans
+import time
 
 logger = logging.getLogger(__name__)
 # logger.addHandler(logging.StreamHandler(sys.stdout))
@@ -12,19 +13,20 @@ logger.setLevel(logging.INFO)
 
 
 class EM:
-    def __init__(self, img, init_type, n_clusters):
-        # todo add dim
+    def __init__(self, img, init_type, n_clusters, dim):
         self.orig_data = img
         self.nz_indices = [i for i, x in enumerate(img) if x.any()]
         self.data = img[self.nz_indices]
-
+        self.dim = dim
         self.n_clusters = n_clusters
-
+        self.log_likelihood_arr=[]
         self.init_type = init_type
+        self.k_means_time = 0
         self.init()
         self.responsibilities = None
         self.log_likelihood = 0
         self.seg_labels = None
+        self.em_time = 0
 
     def init(self):
         if self.init_type == 'random':
@@ -35,19 +37,36 @@ class EM:
             raise Exception("Init Type not defined")
 
     def init_random(self, data, n_clusters):
-        mean_s = np.random.randint(low=min(data), high=max(data), size=(n_clusters, data.shape[1]))
+        mean_s = np.random.randint(low=np.min(data), high=np.max(data), size=(n_clusters, data.shape[1]))
         random_assign = np.random.randint(low=0, high=n_clusters, size=data.shape[0])
         cov_s = [np.cov(data[random_assign == i].T) for i in range(n_clusters)]
         pi_s = np.random.rand(n_clusters)
         return mean_s, cov_s, pi_s
 
+    # based on the inituation that 0 is background and lowest inten. is CSF and highest intens. is WM
+    def mask_from_recovered(self, recovered_img):
+        mean_values = np.unique(recovered_img)
+        seg_mask = np.zeros_like(recovered_img)
+
+        for i in range(len(mean_values)):
+            seg_mask[recovered_img == mean_values[i]] = i
+        return seg_mask
+
     def init_kmeans(self, data, n_clusters):
+        start_time = time.time()
+
         kmeans = KMeans(n_clusters=n_clusters, init='k-means++', random_state=0)
         y = kmeans.fit_predict(data)
         mean_s = [np.mean(data[y == i], axis=0) for i in range(n_clusters)]
         cov_s = np.array([np.cov(data[y == i].T) for i in range(n_clusters)])
         ids = set(y)
         pi_s = np.array([np.sum([y == i]) / len(y) for i in ids])
+
+        self.k_means_time = (time.time() - start_time)
+
+        # mask from the first initalization (to check kmeans acc)
+        recovered_img = self.get_segm_mask(mean_s, y, self.orig_data, self.nz_indices)
+        self.kmeans_mask = self.mask_from_recovered(recovered_img)
         return mean_s, cov_s, pi_s
 
     def e_step(self, data, mu_s, cov_s, pi_s, n_clusters):
@@ -89,8 +108,8 @@ class EM:
         data_mean_replaced = np.array([element[0] for element in means])
         em_img = data_mean_replaced[labels]
         out_labels[nz_indices] = em_img
-        # todo replace with dim
-        img_recovered = out_labels.reshape(240, 240, 48)
+
+        img_recovered = out_labels.reshape(self.dim)
         return img_recovered
 
     def execute(self, tol, max_iter, visualize=True):
@@ -98,6 +117,7 @@ class EM:
         iter_n = 0
 
         self.responsibilities = self.e_step(self.data, self.mean_s, self.cov_s, self.pi_s, self.n_clusters)
+        start_time = time.time()
         while (abs(prev_log_likelihood - self.log_likelihood) > tol) and (iter_n <= max_iter):
             prev_log_likelihood = self.log_likelihood
 
@@ -111,7 +131,9 @@ class EM:
             self.log_likelihood = self.get_log_likelihood(self.data, self.mean_s, self.cov_s, self.pi_s,
                                                           self.n_clusters)
 
-            logger.info("iter_n:{}, log_likelihood = {}".format(iter_n,self.log_likelihood))
+            self.log_likelihood_arr.append(self.log_likelihood)
+
+            logger.info("iter_n:{}, log_likelihood = {}".format(iter_n, self.log_likelihood))
             if visualize:
                 recover_img = self.get_segm_mask(self.mean_s, self.seg_labels, self.orig_data, self.nz_indices)
                 plt.imshow(recover_img[:, :, 24], cmap=pylab.cm.cool)
@@ -120,6 +142,8 @@ class EM:
 
             iter_n += 1
 
+        self.em_time = (time.time() - start_time)
+
         logger.info('Converged at iter:{} with loglikelihood:{}'.format(iter_n, self.log_likelihood))
 
-        return self.get_segm_mask(self.mean_s, self.seg_labels, self.orig_data, self.nz_indices)
+        return self.get_segm_mask(self.mean_s, self.seg_labels, self.orig_data, self.nz_indices), iter_n
